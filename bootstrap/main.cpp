@@ -144,6 +144,40 @@ struct Slice
         assert(length == other.length);
         memcpy(pointer, other.pointer, sizeof(T) * other.length);
     }
+
+    T* find(T item)
+    {
+        T* result = 0;
+
+        for (T& i : *this)
+        {
+            if (i == item)
+            {
+                result = &i;
+                break;
+            }
+        }
+
+        return result;
+    }
+
+    u32 index(T* item)
+    {
+        return item - pointer;
+    }
+
+    s32 find_index(T item)
+    {
+        if (auto* result = find(item))
+        {
+            auto result_index = index(result);
+            return result_index;
+        }
+        else
+        {
+            return -1;
+        }
+    }
 };
 
 using String = Slice<u8>;
@@ -225,18 +259,18 @@ fn forceinline long syscall6(long n, long a1, long a2, long a3, long a4, long a5
 	return ret;
 }
 
-// fn u8 memeq(u8* a, u8* b, u64 size)
-// {
-//     for (u64 i = 0; i < size; i += 1)
-//     {
-//         if (a[i] != b[i])
-//         {
-//             return 0;
-//         }
-//     }
-//
-//     return 1;
-// }
+fn u8 memeq(u8* a, u8* b, u64 size)
+{
+    for (u64 i = 0; i < size; i += 1)
+    {
+        if (a[i] != b[i])
+        {
+            return 0;
+        }
+    }
+
+    return 1;
+}
 
 enum class SyscallX86_64 : u64 {
     read = 0,
@@ -868,6 +902,20 @@ struct PinnedArray
             .length = length,
         };
     }
+
+    T remove_swap(u32 index)
+    {
+        if (index >= 0 & index < length)
+        {
+            T item = pointer[index];
+            T last = pointer[length - 1];
+            pointer[index] = last;
+            pop();
+            return item;
+        }
+
+        trap();
+    }
 };
 
 forceinline fn u32 generic_pinned_array_length(PinnedArray<u8>* array, u32 size_of_T)
@@ -916,8 +964,7 @@ struct GetOrPut
     V* value;
     u8 existing;
 };
-// fn GetOrPut<u8, u8> generic_pinned_hashmap_get_or_put(PinnedHashmap<u8, u8>* hashmap, u8* new_key_pointer, u32 key_size, u8* new_value_pointer, u32 value_size);
-
+fn GetOrPut<u8, u8> generic_pinned_hashmap_get_or_put(PinnedHashmap<u8, u8>* hashmap, u8* new_key_pointer, u32 key_size, u8* new_value_pointer, u32 value_size);
 
 template<typename K, typename V>
 struct PinnedHashmap
@@ -935,97 +982,102 @@ struct PinnedHashmap
     static_assert(granularity % sizeof(K) == 0, "");
     static_assert(granularity % sizeof(V) == 0, "");
 
-    // forceinline GetOrPut<K, V> get_or_put(K key, V value)
-    // {
-    //     auto* generic_hashmap = (PinnedHashmap<u8, u8>*)(this);
-    //     auto generic_get_or_put = generic_pinned_hashmap_get_or_put(generic_hashmap, (u8*)&key, sizeof(K), (u8*)&value, sizeof(V));
-    //     return *(GetOrPut<K, V>*)&generic_get_or_put;
-    // }
+    forceinline GetOrPut<K, V> get_or_put(K key, V value)
+    {
+        auto* generic_hashmap = (PinnedHashmap<u8, u8>*)(this);
+        auto generic_get_or_put = generic_pinned_hashmap_get_or_put(generic_hashmap, (u8*)&key, sizeof(K), (u8*)&value, sizeof(V));
+        return *(GetOrPut<K, V>*)&generic_get_or_put;
+    }
 };
 
+template<typename K, typename V>
+using Hashmap = PinnedHashmap<K, V>;
+template <typename T>
+using Array = PinnedArray<T>;
+
 // Returns the generic value pointer if the key is present
-// fn u32 generic_pinned_hashmap_get_index(PinnedHashmap<u8, u8>* hashmap, u8* key_pointer, u32 key_size)
-// {
-//     u32 index = hashmap->invalid_index;
-//
-//     for (u32 i = 0; i < hashmap->length; i += 1)
-//     {
-//         u8* it_key_pointer = &hashmap->keys[i * key_size];
-//         if (memeq(it_key_pointer, key_pointer, key_size))
-//         {
-//             index = (it_key_pointer - hashmap->keys) / key_size;
-//             break;
-//         }
-//     }
-//
-//     return index;
-// }
+fn u32 generic_pinned_hashmap_get_index(PinnedHashmap<u8, u8>* hashmap, u8* key_pointer, u32 key_size)
+{
+    u32 index = hashmap->invalid_index;
 
-// fn void generic_pinned_hashmap_ensure_capacity(PinnedHashmap<u8, u8>* hashmap, u32 key_size, u32 value_size, u32 additional_elements)
-// {
-//     if (additional_elements != 0)
-//     {
-//         if (hashmap->key_page_capacity == 0)
-//         {
-//             assert(hashmap->value_page_capacity == 0);
-//             hashmap->keys = (u8*)reserve(hashmap->reserved_size);
-//             hashmap->values = (u8*)reserve(hashmap->reserved_size);
-//         }
-//
-//         u32 target_element_capacity = hashmap->length + additional_elements;
-//
-//         {
-//             u32 key_byte_capacity = hashmap->key_page_capacity * hashmap->granularity;
-//             u32 target_byte_capacity = target_element_capacity * key_size;
-//             if (key_byte_capacity < target_byte_capacity)
-//             {
-//                 u32 aligned_target_byte_capacity = align_forward(target_byte_capacity,  hashmap->granularity);
-//                 void* commit_pointer = hashmap->keys + key_byte_capacity;
-//                 u32 commit_size = aligned_target_byte_capacity - key_byte_capacity;
-//                 commit(commit_pointer, commit_size);
-//                 hashmap->key_page_capacity = aligned_target_byte_capacity / hashmap->granularity;
-//             }
-//         }
-//
-//         {
-//             u32 value_byte_capacity = hashmap->value_page_capacity * hashmap->granularity;
-//             u32 target_byte_capacity = target_element_capacity * value_size;
-//             if (value_byte_capacity < target_byte_capacity)
-//             {
-//                 u32 aligned_target_byte_capacity = align_forward(target_byte_capacity, hashmap->granularity);
-//                 void* commit_pointer = hashmap->values + value_byte_capacity;
-//                 u32 commit_size = aligned_target_byte_capacity - value_byte_capacity;
-//                 commit(commit_pointer, commit_size);
-//                 hashmap->value_page_capacity = aligned_target_byte_capacity / hashmap->granularity;
-//             }
-//         }
-//     }
-// }
+    for (u32 i = 0; i < hashmap->length; i += 1)
+    {
+        u8* it_key_pointer = &hashmap->keys[i * key_size];
+        if (memeq(it_key_pointer, key_pointer, key_size))
+        {
+            index = (it_key_pointer - hashmap->keys) / key_size;
+            break;
+        }
+    }
 
-// fn GetOrPut<u8, u8> generic_pinned_hashmap_get_or_put(PinnedHashmap<u8, u8>* hashmap, u8* new_key_pointer, u32 key_size, u8* new_value_pointer, u32 value_size)
-// {
-//     u32 index = generic_pinned_hashmap_get_index(hashmap, new_key_pointer, key_size);
-//     if (index != hashmap->invalid_index)
-//     {
-//         trap();
-//     }
-//     else
-//     {
-//         generic_pinned_hashmap_ensure_capacity(hashmap, key_size, value_size, 1);
-//         u32 new_index = hashmap->length;
-//         hashmap->length += 1;
-//         u8* key_pointer = &hashmap->keys[new_index * key_size];
-//         u8* value_pointer = &hashmap->values[new_index * value_size];
-//         memcpy(key_pointer, new_key_pointer, key_size);
-//         memcpy(value_pointer, new_value_pointer, value_size);
-//
-//         return {
-//             .key = key_pointer,
-//             .value = value_pointer,
-//             .existing = 0,
-//         };
-//     }
-// }
+    return index;
+}
+
+fn void generic_pinned_hashmap_ensure_capacity(PinnedHashmap<u8, u8>* hashmap, u32 key_size, u32 value_size, u32 additional_elements)
+{
+    if (additional_elements != 0)
+    {
+        if (hashmap->key_page_capacity == 0)
+        {
+            assert(hashmap->value_page_capacity == 0);
+            hashmap->keys = (u8*)reserve(hashmap->reserved_size);
+            hashmap->values = (u8*)reserve(hashmap->reserved_size);
+        }
+
+        u32 target_element_capacity = hashmap->length + additional_elements;
+
+        {
+            u32 key_byte_capacity = hashmap->key_page_capacity * hashmap->granularity;
+            u32 target_byte_capacity = target_element_capacity * key_size;
+            if (key_byte_capacity < target_byte_capacity)
+            {
+                u32 aligned_target_byte_capacity = align_forward(target_byte_capacity,  hashmap->granularity);
+                void* commit_pointer = hashmap->keys + key_byte_capacity;
+                u32 commit_size = aligned_target_byte_capacity - key_byte_capacity;
+                commit(commit_pointer, commit_size);
+                hashmap->key_page_capacity = aligned_target_byte_capacity / hashmap->granularity;
+            }
+        }
+
+        {
+            u32 value_byte_capacity = hashmap->value_page_capacity * hashmap->granularity;
+            u32 target_byte_capacity = target_element_capacity * value_size;
+            if (value_byte_capacity < target_byte_capacity)
+            {
+                u32 aligned_target_byte_capacity = align_forward(target_byte_capacity, hashmap->granularity);
+                void* commit_pointer = hashmap->values + value_byte_capacity;
+                u32 commit_size = aligned_target_byte_capacity - value_byte_capacity;
+                commit(commit_pointer, commit_size);
+                hashmap->value_page_capacity = aligned_target_byte_capacity / hashmap->granularity;
+            }
+        }
+    }
+}
+
+fn GetOrPut<u8, u8> generic_pinned_hashmap_get_or_put(PinnedHashmap<u8, u8>* hashmap, u8* new_key_pointer, u32 key_size, u8* new_value_pointer, u32 value_size)
+{
+    u32 index = generic_pinned_hashmap_get_index(hashmap, new_key_pointer, key_size);
+    if (index != hashmap->invalid_index)
+    {
+        trap();
+    }
+    else
+    {
+        generic_pinned_hashmap_ensure_capacity(hashmap, key_size, value_size, 1);
+        u32 new_index = hashmap->length;
+        hashmap->length += 1;
+        u8* key_pointer = &hashmap->keys[new_index * key_size];
+        u8* value_pointer = &hashmap->values[new_index * value_size];
+        memcpy(key_pointer, new_key_pointer, key_size);
+        memcpy(value_pointer, new_value_pointer, value_size);
+
+        return {
+            .key = key_pointer,
+            .value = value_pointer,
+            .existing = 0,
+        };
+    }
+}
 
 typedef enum FileStatus
 {
@@ -1181,8 +1233,6 @@ struct Unit
     }
 };
 
-struct Node;
-struct FunctionPrototype;
 
 struct NodeType
 {
@@ -1265,6 +1315,7 @@ struct AbiInfo
     AbiInfoKind kind;
 };
 
+struct Node;
 struct Function
 {
     struct Prototype
@@ -1281,6 +1332,7 @@ struct Function
         // Node::DataType abi_return_type;
         u8 varags:1;
     };
+
     Symbol symbol;
     Node* root_node;
     Node** parameters;
@@ -1311,25 +1363,15 @@ struct Node
         CONSTANT_INT,
         INT_ADD,
         INT_SUB,
+        SCOPE,
     };
 
     using Type = NodeType;
 
-
-    struct Output
-    {
-        Node* node;
-        u16 slot;
-    };
-
-    Node** inputs;
-    Output* outputs;
+    PinnedArray<Node*> inputs;
+    PinnedArray<Node*> outputs;
     u32 gvn;
     Type type;
-    u16 input_count;
-    u16 input_capacity;
-    u16 output_count;
-    u16 output_capacity;
     Id id;
 
     union
@@ -1338,28 +1380,32 @@ struct Node
         {
             u32 index;
         } projection;
+        struct
+        {
+            Array<Hashmap<String, u16>> stack;
+        } scope;
     };
 
     forceinline Slice<Node*> get_inputs()
     {
         return {
-            .pointer = inputs,
-            .length = input_count,
+            .pointer = inputs.pointer,
+            .length = inputs.length,
         };
     }
 
-    forceinline Slice<Output> get_outputs()
+    forceinline Slice<Node*> get_outputs()
     {
         return {
-            .pointer = outputs,
-            .length = output_count,
+            .pointer = outputs.pointer,
+            .length = outputs.length,
         };
     }
 
     struct NodeData
     {
         Type type;
-        u16 input_count;
+        Slice<Node*> inputs;
         Id id;
     };
 
@@ -1367,33 +1413,33 @@ struct Node
     {
         NodeData s;
         u32 gvn;
-        u16 input_capacity;
     };
 
     [[nodiscard]] fn Node* add(Arena* arena, DynamicNodeData data)
     {
         auto* node = arena->allocate_one<Node>();
-        u16 output_count = 0;
-        u16 output_capacity = 4;
         *node = {
-            .inputs = arena->allocate_many<Node*>(data.input_capacity),
-            .outputs = arena->allocate_many<Output>(output_capacity),
+            .inputs = {},
+            .outputs = {},
             .gvn = data.gvn,
             .type = data.s.type,
-            .input_count = data.s.input_count,
-            .input_capacity = data.input_capacity,
-            .output_count = output_count,
-            .output_capacity = output_capacity,
             .id = data.s.id,
         };
 
-        memset(node->inputs, 0, sizeof(Node*) * node->input_capacity);
-        memset(node->outputs, 0, sizeof(Output) * node->output_capacity);
+        node->inputs.append(data.s.inputs);
+
+        for (Node* input : data.s.inputs)
+        {
+            if (input)
+            {
+                input->add_output(node);
+            }
+        }
 
         return node;
     }
 
-    [[nodiscard]] fn Node* add_from_function_dynamic(Arena* arena, Function* function, NodeData data, u16 input_capacity)
+    [[nodiscard]] fn Node* add_from_function(Arena* arena, Function* function, NodeData data)
     {
         auto gvn = function->node_count;
         function->node_count += 1;
@@ -1401,82 +1447,32 @@ struct Node
         auto* node = add(arena, {
             .s = data,
             .gvn = gvn,
-            .input_capacity = input_capacity,
         });
         return node;
     }
 
-    [[nodiscard]] fn Node* add_from_function(Arena* arena, Function* function, NodeData data)
+    Node* add_output(Node* output)
     {
-        return add_from_function_dynamic(arena, function, data, data.input_count);
+        outputs.append_one(output);
+        return this;
     }
 
-    struct ProjectionData
+    // Node* add_input(Node* input)
+    // {
+    //     inputs.append_one(input);
+    //     if (input)
+    //     {
+    //         input->add_output(this);
+    //     }
+    //     return input;
+    // }
+
+    u8 remove_output(Node* output)
     {
-        Node::Type type;
-        u16 index;
-    };
-    
-    [[nodiscard]] Node* project(Arena* arena, Function* function, ProjectionData data)
-    {
-        assert(type.id == Type::Id::TUPLE);
-
-        Node* projection = Node::add_from_function(arena, function, {
-            .input_count = 1,
-        });
-        assert(projection != this);
-        projection->id = Node::Id::PROJECTION;
-        projection->type = data.type;
-        // projection->reallocate_edges(unit, 4);
-        projection->input_count = 1;
-        projection->set_input(arena, this, 0);
-        projection->projection.index = data.index;
-
-        return projection;
-    }
-
-    void set_input(Arena* arena, Node* input, u16 slot)
-    {
-        assert(slot < input_count);
-        remove_output(slot);
-        inputs[slot] = input;
-        if (input)
-        {
-            add_output(arena, input, slot);
-        }
-    }
-
-    void add_output(Arena* arena, Node* input, u16 slot)
-    {
-        if (input->output_count >= input->output_capacity)
-        {
-            auto new_capacity = max<u32>(input->output_count, (u32)input->output_capacity * 2);
-            assert(new_capacity <= 0xffff);
-            auto* new_array = arena->allocate_many<Output>(new_capacity);
-            memcpy(new_array, input->outputs, sizeof(Output) * input->output_count);
-            memset(new_array + input->output_count, 0, sizeof(Output) * (new_capacity - input->output_count));
-            input->outputs = new_array;
-            input->output_capacity = new_capacity;
-        }
-
-        auto index = input->output_count;
-        input->output_count += 1;
-        input->outputs[index] = {
-            .node = this,
-            .slot = slot,
-        };
-    }
-
-    void remove_output(u16 slot)
-    {
-        if (slot < output_count)
-        {
-            Output* output_slot = &outputs[slot];
-            if (output_slot->node)
-            {
-                trap();
-            }
-        }
+        s32 index = outputs.slice().find_index(output);
+        assert(index != -1);
+        outputs.remove_swap(index);
+        return outputs.length == 0;
     }
 
     u8 is_pinned()
@@ -1494,6 +1490,9 @@ struct Node
         case Id::INT_ADD:
         case Id::INT_SUB:
             trap();
+        case Id::SCOPE:
+            trap();
+          break;
         }
 
         return is_good_id | is_projection() | cfg_is_control_projection();
@@ -1522,9 +1521,9 @@ struct Node
             case Node::Type::Id::CONTROL:
             return 1;
         case Node::Type::Id::TUPLE:
-            for (Output& output : get_outputs())
+            for (Node* output : get_outputs())
             {
-                if (output.node->cfg_is_control_projection())
+                if (output->cfg_is_control_projection())
                 {
                     return 1;
                 }
@@ -1545,28 +1544,41 @@ struct Node
         case Id::INT_ADD:
         case Id::INT_SUB:
             return 0;
+        case Id::SCOPE:
+            trap();
         }
     }
 
     u8 is_unused()
     {
-        return output_count == 0;
+        return outputs.length == 0;
     }
 
     u8 is_dead()
     {
-        return is_unused() & (input_count == 0) & (type.id == Node::Type::Id::INVALID);
+        return is_unused() & (inputs.length == 0) & (type.id == Node::Type::Id::INVALID);
+    }
+
+    void pop_inputs(Arena* arena, u32 count)
+    {
+        for (u32 i = 0; i < count; i += 1)
+        {
+            Node* old_input = inputs.pop();
+            if (old_input)
+            {
+                if (old_input->remove_output(this))
+                {
+                    old_input->kill(arena);
+                }
+            }
+        }
     }
 
     void kill(Arena* arena)
     {
         assert(is_unused());
 
-        for (u16 i = 0; i < input_count; i += 1)
-        {
-            set_input(arena, 0, i);
-        }
-        input_count = 0;
+        pop_inputs(arena, get_inputs().length);
         type = {};
 
         assert(is_dead());
@@ -1587,17 +1599,16 @@ struct Node
             this->kill(arena);
             auto gvn = function->node_count;
             function->node_count += 1;
+
             auto* constant_int = Node::add(arena, {
                 .s =
                 {
                     .type = type,
-                    .input_count = 1,
+                    .inputs = { .pointer = &function->root_node, .length = 1 },
                     .id = Node::Id::CONSTANT_INT,
                 },
                 .gvn = gvn,
-                .input_capacity = 1,
             });
-            constant_int->set_input(arena, function->root_node, 0);
             auto* result = constant_int->peephole(arena, function);
             return result;
         }
@@ -1637,6 +1648,7 @@ struct Node
                             case Id::PROJECTION:
                             case Id::RETURN:
                             case Id::CONSTANT_INT:
+                            case Id::SCOPE:
                                 trap();
                             case Id::INT_ADD:
                                 result = left_type.integer.constant + right_type.integer.constant;
@@ -1645,7 +1657,6 @@ struct Node
                                 result = left_type.integer.constant - right_type.integer.constant;
                                 break;
                             }
-
 
                             return Node::Type{
                                 .id = Node::Type::Id::INTEGER,
@@ -1681,13 +1692,11 @@ struct Node
                     .is_constant = 1,
                 },
             },
-            .input_count = 1,
+            .inputs = { .pointer = &data.input, .length = 1 },
             .id = Node::Id::CONSTANT_INT,
         },
         .gvn = data.gvn,
-        .input_capacity = 1,
     });
-    constant_int->set_input(arena, data.input, 0);
     return constant_int;
 }
 
@@ -1994,14 +2003,6 @@ fn Thread* instance_add_thread(Instance* instance)
     return thread;
 }
 
-struct Parser
-{
-    u64 i;
-    u32 line;
-    u32 column;
-};
-typedef struct Parser Parser;
-
 fn u64 safe_flag(u64 value, u64 flag)
 {
     u64 result = value & ((u64)0 - flag);
@@ -2029,54 +2030,6 @@ fn u32 is_space(u8 ch, u8 next_ch)
     u32 is_carry_return = ch == '\r';
     u32 result = (((is_vertical_tab | is_horizontal_tab) | (is_line_feed | is_carry_return)) | (is_comment | is_whitespace));
     return result;
-}
-
-fn void skip_space(Parser* parser, String src)
-{
-    u64 original_i = parser->i;
-
-    if (original_i != src.length)
-    {
-        if (is_space(src.pointer[original_i], get_next_ch_safe(src, original_i)))
-        {
-            while (parser->i < src.length)
-            {
-                u64 index = parser->i;
-                u8 ch = src.pointer[index];
-                u64 new_line = ch == '\n';
-                parser->line += new_line;
-
-                if (new_line)
-                {
-                    parser->column = index + 1;
-                }
-
-                if (!is_space(ch, get_next_ch_safe(src, parser->i)))
-                {
-                    break;
-                }
-
-                u32 is_comment = src.pointer[index] == '/';
-                parser->i += is_comment + is_comment;
-                if (is_comment)
-                {
-                    while (parser->i < src.length)
-                    {
-                        if (src.pointer[parser->i] == '\n')
-                        {
-                            break;
-                        }
-
-                        parser->i += 1;
-                    }
-
-                    continue;
-                }
-
-                parser->i += 1;
-            }
-        }
-    }
 }
 
 fn u64 is_lower(u8 ch)
@@ -2119,102 +2072,155 @@ fn u64 is_identifier_ch(u8 ch)
     return identifier_start | decimal;
 }
 
-fn void expect_character(Parser* parser, String src, u8 expected_ch)
+struct Parser
 {
-    u64 index = parser->i;
-    if (expect(index < src.length, 1))
+    u64 i;
+    u32 line;
+    u32 column;
+
+    void skip_space(String src)
     {
-        u8 ch = src.pointer[index];
-        u64 matches = ch == expected_ch;
-        expect(matches, 1);
-        parser->i += matches;
-        if (!matches)
+        u64 original_i = i;
+
+        if (original_i != src.length)
+        {
+            if (is_space(src.pointer[original_i], get_next_ch_safe(src, original_i)))
+            {
+                while (i < src.length)
+                {
+                    u64 index = i;
+                    u8 ch = src.pointer[index];
+                    u64 new_line = ch == '\n';
+                    line += new_line;
+
+                    if (new_line)
+                    {
+                        column = index + 1;
+                    }
+
+                    if (!is_space(ch, get_next_ch_safe(src, i)))
+                    {
+                        break;
+                    }
+
+                    u32 is_comment = src.pointer[index] == '/';
+                    i += is_comment + is_comment;
+                    if (is_comment)
+                    {
+                        while (i < src.length)
+                        {
+                            if (src.pointer[i] == '\n')
+                            {
+                                break;
+                            }
+
+                            i += 1;
+                        }
+
+                        continue;
+                    }
+
+                    i += 1;
+                }
+            }
+        }
+    }
+    void expect_character(String src, u8 expected_ch)
+    {
+        u64 index = i;
+        if (expect(index < src.length, 1))
+        {
+            u8 ch = src.pointer[index];
+            u64 matches = ch == expected_ch;
+            expect(matches, 1);
+            i += matches;
+            if (!matches)
+            {
+                print(strlit("expected character '"));
+                print(ch_to_str(expected_ch));
+                print(strlit("', but found '"));
+                print(ch_to_str(ch));
+                print(strlit("'\n"));
+                fail();
+            }
+        }
+        else
         {
             print(strlit("expected character '"));
             print(ch_to_str(expected_ch));
-            print(strlit("', but found '"));
-            print(ch_to_str(ch));
-            print(strlit("'\n"));
+            print(strlit("', but found end of file\n"));
             fail();
         }
     }
-    else
-    {
-        print(strlit("expected character '"));
-        print(ch_to_str(expected_ch));
-        print(strlit("', but found end of file\n"));
-        fail();
-    }
-}
 
-fn String parse_raw_identifier(Parser* parser, String src)
-{
-    u64 identifier_start_index = parser->i;
-    u64 is_string_literal = src.pointer[identifier_start_index] == '"';
-    parser->i += is_string_literal;
-    u8 identifier_start_ch = src.pointer[parser->i];
-    u64 is_valid_identifier_start = is_identifier_start(identifier_start_ch);
-    parser->i += is_valid_identifier_start;
-
-    if (expect(is_valid_identifier_start, 1))
+    String parse_raw_identifier(String src)
     {
-        while (parser->i < src.length)
+        u64 identifier_start_index = i;
+        u64 is_string_literal = src.pointer[identifier_start_index] == '"';
+        i += is_string_literal;
+        u8 identifier_start_ch = src.pointer[i];
+        u64 is_valid_identifier_start = is_identifier_start(identifier_start_ch);
+        i += is_valid_identifier_start;
+
+        if (expect(is_valid_identifier_start, 1))
         {
-            u8 ch = src.pointer[parser->i];
-            u64 is_identifier = is_identifier_ch(ch);
-            expect(is_identifier, 1);
-            parser->i += is_identifier;
-
-            if (!is_identifier)
+            while (i < src.length)
             {
-                if (expect(is_string_literal, 0))
+                u8 ch = src.pointer[i];
+                u64 is_identifier = is_identifier_ch(ch);
+                expect(is_identifier, 1);
+                i += is_identifier;
+
+                if (!is_identifier)
                 {
-                    expect_character(parser, src, '"');
+                    if (expect(is_string_literal, 0))
+                    {
+                        expect_character(src, '"');
+                    }
+
+                    String result = src.slice(identifier_start_index, i - is_string_literal);
+                    return result;
                 }
-
-                String result = src.slice(identifier_start_index, parser->i - is_string_literal);
-                return result;
             }
+
+            fail();
         }
-
-        fail();
+        else
+        {
+            fail();
+        }
     }
-    else
+
+    typedef enum Keyword : u32
     {
-        fail();
-    }
-}
+        KEYWORD_COUNT,
+        KEYWORD_INVALID = ~0u,
+    } Keyword;
 
-typedef enum Keyword : u32
-{
-    KEYWORD_COUNT,
-    KEYWORD_INVALID = ~0u,
-} Keyword;
-
-// TODO:
-// fn Keyword parse_keyword(String identifier)
-// {
-//     Keyword result = KEYWORD_INVALID;
-//     return result;
-// }
-
-fn String parse_and_check_identifier(Parser* parser, String src)
-{
-    String identifier = parse_raw_identifier(parser, src);
-    // Keyword keyword_index = parse_keyword(identifier);
-    // if (expect(keyword_index != KEYWORD_INVALID, 0))
+    // TODO:
+    // fn Keyword parse_keyword(String identifier)
     // {
-    //     fail();
+    //     Keyword result = KEYWORD_INVALID;
+    //     return result;
     // }
 
-    if (expect(identifier.equal(strlit("_")), 0))
+    String parse_and_check_identifier(String src)
     {
-        return {};
+        String identifier = parse_raw_identifier(src);
+        // Keyword keyword_index = parse_keyword(identifier);
+        // if (expect(keyword_index != KEYWORD_INVALID, 0))
+        // {
+        //     fail();
+        // }
+
+        if (expect(identifier.equal(strlit("_")), 0))
+        {
+            return {};
+        }
+
+        return identifier;
     }
-
-    return identifier;
-}
-
+};
 
 // fn u32 get_line(Parser* parser)
 // {
@@ -2266,6 +2272,8 @@ global constexpr auto symbol_attribute_end = bracket_close;
 
 global constexpr auto block_start = brace_open;
 global constexpr auto block_end = brace_close;
+
+global constexpr auto local_symbol_declaration_start = '>';
 
 global constexpr auto array_expression_start = bracket_open;
 // global constexpr auto array_expression_end = bracket_close;
@@ -2326,6 +2334,7 @@ static_assert(array_length(global_symbol_attributes) == GLOBAL_SYMBOL_ATTRIBUTE_
 struct Analyzer
 {
     Function* function;
+    Node* scope;
 };
 
 fn SemaType* analyze_type(Parser* parser, Unit* unit, String src)
@@ -2678,7 +2687,7 @@ fn u64 parse_decimal(String string)
             current_node = analyze_single_expression(analyzer, parser, unit, arena, src, iteration_type, side);
         }
 
-        skip_space(parser, src);
+        parser->skip_space(src);
 
         switch (current_operation)
         {
@@ -2704,14 +2713,17 @@ fn u64 parse_decimal(String string)
                     trap();
                 }
 
+                Node* inputs[] = {
+                    0,
+                    previous_node,
+                    current_node,
+                };
+
                 auto* binary = Node::add_from_function(arena, analyzer->function, {
                     .type = current_node->type,
-                    .input_count = 3,
+                    .inputs = { .pointer = inputs, .length = array_length(inputs), },
                     .id = id,
                 });
-                binary->set_input(arena, 0, 0);
-                binary->set_input(arena, previous_node, 1);
-                binary->set_input(arena, current_node, 2);
 
                 previous_node = binary;
             } break;
@@ -2763,18 +2775,44 @@ fn u64 parse_decimal(String string)
                 trap();
         }
 
-        skip_space(parser, src);
+        parser->skip_space(src);
 
         iterations += 1;
     }
 }
 
-fn void analyze_local_block(Analyzer* analyzer, Parser* parser, Unit* unit, Arena* arena, String src)
+fn void push_scope(Analyzer* analyzer)
 {
-    expect_character(parser, src, block_start);
+    analyzer->scope->scope.stack.append_one({});
+}
+
+fn void pop_scope(Analyzer* analyzer)
+{
+    analyzer->scope->scope.stack.pop();
+}
+
+fn Node* define_variable(Analyzer* analyzer, Arena* arena, String name, Node* node)
+{
+    auto* stack = &analyzer->scope->scope.stack;
+    assert(stack->length);
+    auto* last = &stack->pointer[stack->length - 1];
+    if (last->get_or_put(name, analyzer->scope->inputs.length).existing)
+    {
+        return 0;
+    }
+
+    return analyzer->scope->add_output(node);
+}
+
+fn Node* analyze_local_block(Analyzer* analyzer, Parser* parser, Unit* unit, Arena* arena, String src)
+{
+    push_scope(analyzer);
+    parser->expect_character(src, block_start);
+
+    Node* node = 0;
     while (1)
     {
-        skip_space(parser, src);
+        parser->skip_space(src);
 
         if (src[parser->i] == block_end)
         {
@@ -2784,38 +2822,124 @@ fn void analyze_local_block(Analyzer* analyzer, Parser* parser, Unit* unit, Aren
         auto statement_start_index = parser->i;
         u8 statement_start_ch = src[statement_start_index];
 
+        Node* statement_node = 0;
+
         if (is_identifier_start(statement_start_ch))
         {
-            String identifier = parse_raw_identifier(parser, src);
+            String identifier = parser->parse_raw_identifier(src);
             if (identifier.equal(strlit("return")))
             {
-                skip_space(parser, src);
+                parser->skip_space(src);
 
                 auto* return_value = analyze_expression(analyzer, parser, unit, arena, src, analyzer->function->prototype.original_return_type, Side::right);
-                expect_character(parser, src, ';');
+                parser->expect_character(src, ';');
 
                 Function* function = analyzer->function;
 
+                Node* inputs[] =
+                {
+                    function->root_node,
+                    return_value,
+                };
+
                 Node* ret_node = Node::add_from_function(arena, function, {
                     .type = { .id = Node::Type::Id::CONTROL },
-                    .input_count = 2,
+                    .inputs = { .pointer = inputs, .length = array_length(inputs) },
                     .id = Node::Id::RETURN,
                 });
-                ret_node->set_input(arena, function->root_node, 0);
-                ret_node->set_input(arena, return_value, 1);
+                statement_node = ret_node;
             }
-            else
+
+            if (!statement_node)
             {
+                print(strlit("statement: '"));
+                print(identifier);
+                print(strlit("'\n"));
                 trap();
             }
         }
         else
         {
-            trap();
+            switch (statement_start_ch)
+            {
+                case local_symbol_declaration_start:
+                    {
+                        parser->i += 1;
+
+                        parser->skip_space(src);
+
+                        String name = parser->parse_and_check_identifier(src);
+
+                        u8 has_local_attributes = src[parser->i] == symbol_attribute_start;
+                        parser->i += has_local_attributes;
+
+                        if (has_local_attributes)
+                        {
+                            // TODO: local attributes
+                            fail();
+                        }
+
+                        parser->skip_space(src);
+
+                        struct LocalResult
+                        {
+                            Node* node;
+                            SemaType* type;
+                        };
+
+                        LocalResult local_result = {};
+                        switch (src[parser->i])
+                        {
+                            case ':':
+                                {
+                                    parser->i += 1;
+                                    parser->skip_space(src);
+
+                                    SemaType* type = analyze_type(parser, unit, src);
+
+                                    parser->skip_space(src);
+                                    parser->expect_character(src, '=');
+                                    parser->skip_space(src);
+
+                                    auto* initial_node = analyze_expression(analyzer, parser, unit, arena, src, type, Side::right);
+                                    if (!define_variable(analyzer, arena, name, initial_node))
+                                    {
+                                        fail();
+                                    }
+                                    local_result = {
+                                        .node = initial_node,
+                                        .type = type,
+                                    };
+                                } break;
+                            case '=': trap();
+                            default: fail();
+                        }
+
+                        parser->skip_space(src);
+                        parser->expect_character(src, ';');
+
+                        statement_node = local_result.node;
+                    } break;
+                case block_start:
+                    {
+                        statement_node = analyze_local_block(analyzer, parser, unit, arena, src);
+                    } break;
+                default:
+                    trap();
+            }
+        }
+
+        if (statement_node)
+        {
+            node = statement_node;
         }
     }
 
-    expect_character(parser, src, block_end);
+    parser->expect_character(src, block_end);
+
+    pop_scope(analyzer);
+
+    return node;
 }
 
 typedef enum SystemVClass
@@ -2950,10 +3074,10 @@ fn SemaType* systemv_get_int_type_at_offset(SemaType* type, u64 offset, SemaType
 
 fn void analyze_function(Parser* parser, Thread* thread, Unit* unit, String src)
 {
-    expect_character(parser, src, 'f');
-    expect_character(parser, src, 'n');
+    parser->expect_character(src, 'f');
+    parser->expect_character(src, 'n');
 
-    skip_space(parser, src);
+    parser->skip_space(src);
     
     u64 has_function_attributes = src.pointer[parser->i] == function_attribute_start;
     parser->i += has_function_attributes;
@@ -2966,14 +3090,14 @@ fn void analyze_function(Parser* parser, Thread* thread, Unit* unit, String src)
 
         while (1)
         {
-            skip_space(parser, src);
+            parser->skip_space(src);
 
             if (src.pointer[parser->i] == function_attribute_end)
             {
                 break;
             }
 
-            String attribute_candidate = parse_raw_identifier(parser, src);
+            String attribute_candidate = parser->parse_raw_identifier(src);
 
             u64 attribute_i;
             for (attribute_i = 0; attribute_i < array_length(function_attributes); attribute_i += 1)
@@ -2993,13 +3117,13 @@ fn void analyze_function(Parser* parser, Thread* thread, Unit* unit, String src)
                     {
                         case FUNCTION_ATTRIBUTE_CC:
                             {
-                                skip_space(parser, src);
-                                expect_character(parser, src, '(');
-                                skip_space(parser, src);
-                                expect_character(parser, src, '.');
-                                String candidate_cc = parse_raw_identifier(parser, src);
-                                skip_space(parser, src);
-                                expect_character(parser, src, ')');
+                                parser->skip_space(src);
+                                parser->expect_character(src, '(');
+                                parser->skip_space(src);
+                                parser->expect_character(src, '.');
+                                String candidate_cc = parser->parse_raw_identifier(src);
+                                parser->skip_space(src);
+                                parser->expect_character(src, ')');
 
                                 u64 cc_i;
                                 for (cc_i = 0; cc_i < array_length(calling_conventions); cc_i += 1)
@@ -3031,7 +3155,7 @@ fn void analyze_function(Parser* parser, Thread* thread, Unit* unit, String src)
                 fail();
             }
 
-            skip_space(parser, src);
+            parser->skip_space(src);
 
             u8 after_ch = src.pointer[parser->i];
             switch (after_ch)
@@ -3041,14 +3165,14 @@ fn void analyze_function(Parser* parser, Thread* thread, Unit* unit, String src)
             }
         }
 
-        expect_character(parser, src, function_attribute_end);
+        parser->expect_character(src, function_attribute_end);
 
-        skip_space(parser, src);
+        parser->skip_space(src);
     }
 
-    String name = parse_and_check_identifier(parser, src);
+    String name = parser->parse_and_check_identifier(src);
 
-    skip_space(parser, src);
+    parser->skip_space(src);
 
     u64 has_global_attributes = src.pointer[parser->i] == symbol_attribute_start;
     parser->i += has_global_attributes;
@@ -3060,15 +3184,15 @@ fn void analyze_function(Parser* parser, Thread* thread, Unit* unit, String src)
 
         while (1)
         {
-            skip_space(parser, src);
+            parser->skip_space(src);
 
             if (src.pointer[parser->i] == symbol_attribute_end)
             {
                 break;
             }
 
-            String candidate_attribute = parse_raw_identifier(parser, src);
-            skip_space(parser, src);
+            String candidate_attribute = parser->parse_raw_identifier(src);
+            parser->skip_space(src);
             switch (src.pointer[parser->i])
             {
                 case symbol_attribute_end:
@@ -3116,9 +3240,9 @@ fn void analyze_function(Parser* parser, Thread* thread, Unit* unit, String src)
             }
         }
 
-        expect_character(parser, src, symbol_attribute_end);
+        parser->expect_character(src, symbol_attribute_end);
 
-        skip_space(parser, src);
+        parser->skip_space(src);
     }
 
     if (symbol_attributes.exported & symbol_attributes.external)
@@ -3126,11 +3250,11 @@ fn void analyze_function(Parser* parser, Thread* thread, Unit* unit, String src)
         fail();
     }
 
-    expect_character(parser, src, function_argument_start);
+    parser->expect_character(src, function_argument_start);
 
     while (1)
     {
-        skip_space(parser, src);
+        parser->skip_space(src);
 
         if (src.pointer[parser->i] == function_argument_end)
         {
@@ -3141,14 +3265,14 @@ fn void analyze_function(Parser* parser, Thread* thread, Unit* unit, String src)
         trap();
     }
 
-    expect_character(parser, src, function_argument_end);
+    parser->expect_character(src, function_argument_end);
 
-    skip_space(parser, src);
+    parser->skip_space(src);
     PinnedArray<SemaType*> original_argument_types = {};
 
     SemaType* original_return_type = analyze_type(parser, unit, src);
 
-    skip_space(parser, src);
+    parser->skip_space(src);
 
     switch (calling_convention)
     {
@@ -3297,45 +3421,25 @@ fn void analyze_function(Parser* parser, Thread* thread, Unit* unit, String src)
                 .node_count = 0,
                 .parameter_count = (u16)argument_type_abis.length,
             };
-            
-            function->root_node = Node::add_from_function_dynamic(thread->arena, function, {
+
+            function->root_node = Node::add_from_function(thread->arena, function, {
                 .type = { .id = Node::Type::Id::TUPLE },
-                .input_count = 2,
                 .id = Node::Id::ROOT,
-            }, 4);
-
-            // TODO: revisit
-
-            // auto* control_node = root_node->project(unit, function, {
-            //     .type = { .id = Node::Type::Id::CONTROL },
-            // });
-            // auto* memory_node = root_node->project(unit, function, {});
-            // auto* pointer_node = root_node->project(unit, function, {});
-            // function->parameters[0] = control_node;
-            // function->parameters[1] = memory_node;
-            // function->parameters[2] = pointer_node;
-
-            for (u32 argument_i = 0; argument_i < argument_type_abis.length; argument_i += 1)
-            {
-                trap();
-            }
-
-            // TODO: callgraph
-
-            // TODO: revisit
-            // Node* ret_node = Node::add_from_function(unit, function);
-            // ret_node->id = Node::Id::RETURN;
-            // ret_node->data_type = { .id = Node::Type::Id::CONTROL };
-            // ret_node->reallocate_edges(unit, 4);
-            // ret_node->input_count = 2;
-            // ret_node->set_input(unit, function, root_node, 0);
+            });
 
             switch (symbol_attributes.external)
             {
                 case 0:
                     {
-                        Analyzer analyzer = {};
-                        analyzer.function = function;
+                        Analyzer analyzer = {
+                            .function = function,
+                            .scope = Node::add_from_function(thread->arena, function, {
+                                .type = { .id = Node::Type::Id::BOTTOM },
+                                .inputs = { .pointer = &function->root_node, .length = 1 },
+                                .id = Node::Id::SCOPE,
+                            }),
+                        };
+                        analyzer.scope->scope.stack = {};
                         analyze_local_block(&analyzer, parser, unit, thread->arena, src);
                         // TODO: remove hack
                         thread->functions = {
@@ -3365,7 +3469,7 @@ fn void unit_file_analyze(Thread* thread, Unit* unit, File* file)
 
     while (1) 
     {
-        skip_space(&parser, src);
+        parser.skip_space(src);
 
         if (parser.i >= src.length)
         {
@@ -3497,6 +3601,7 @@ global Instance instance;
 String test_file_paths[] = {
     strlit("tests/first/main.nat"),
     strlit("tests/constant_prop/main.nat"),
+    strlit("tests/simple_variable_declaration/main.nat"),
 };
 
 extern "C" void entry_point()
